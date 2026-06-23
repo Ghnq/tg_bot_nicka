@@ -13,7 +13,7 @@ from telegram.ext import (
 # ─────────────────────────────────────────────
 # НАСТРОЙКИ
 # ─────────────────────────────────────────────
-BOT_TOKEN = "8173562858:AAG-2iV7mVXrjmggFbEM57tBMnjVkJ8yUlI"
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 MINI_APP_URL = "https://veronickaapp.lovable.app"
 CONSULTATION_URL = "https://t.me/pa_nicka"
 CHANNEL_URL = "https://t.me/potom_podumay"
@@ -185,7 +185,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         print("BUTTON CLICKED")
         print("DATA:", query.data)
-
+        
+        data = query.data
         await query.answer()
 
     except Exception as e:
