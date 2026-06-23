@@ -1,14 +1,16 @@
+cat > /home/claude/bot.py << 'ENDOFFILE'
 import logging
 import json
 import os
 from datetime import datetime, timezone
 from aiohttp import web
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, InputMediaPhoto
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     MessageHandler, ContextTypes, filters
 )
+from telegram.constants import ParseMode
 
 # ─────────────────────────────────────────────
 # НАСТРОЙКИ
@@ -19,6 +21,10 @@ CONSULTATION_URL = "https://t.me/pa_nicka"
 CHANNEL_URL = "https://t.me/potom_podumay"
 YOUR_TELEGRAM_ID = 451210923
 API_PORT = 8080
+
+# Картинка для вопроса "Что мешает жить спокойно"
+# Замени на свой URL или file_id после первого деплоя
+BRANCH_IMAGE_URL = "https://images.unsplash.com/photo-1518002054494-3a6f94352e9d?w=800&q=80"
 # ─────────────────────────────────────────────
 
 GUIDE_FILE_ID = None
@@ -44,7 +50,6 @@ def save_db(data):
     with open(DB_FILE, "w") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-
 def is_returning_user(user_id: int) -> bool:
     db = load_db()
     return str(user_id) in db
@@ -64,12 +69,12 @@ def save_user(user_id: int):
 # ═══════════════════════════════════════════════
 
 THERAPY_CARDS = [
-    "1/6  Терапия — это не советы и не инструкции. Психолог не говорит, что делать. Он помогает понять, почему вы снова и снова оказываетесь в одной и той же точке.",
-    "2/6  В терапии можно говорить то, что неловко говорить близким. Без страха быть осуждённым, неправильно понятым или обременить другого человека.",
-    "3/6  Со временем становится легче замечать свои реакции до того, как они уже произошли. Это не контроль — это понимание себя.",
-    "4/6  Тревога, усталость, сложности в отношениях — это редко про одну причину. Терапия помогает разобраться в том, что стоит за поверхностью.",
-    "5/6  Изменения в терапии происходят постепенно. Не после одной сессии. Но в какой-то момент замечаешь, что реагируешь иначе — и это уже твоё, а не результат чьего-то совета.",
-    "6/6  Первая сессия с Вероникой — это знакомство. Полчаса, чтобы рассказать о своём запросе и понять, подходит ли такой формат работы. Без обязательств.",
+    "*1 / 6*\n\nТерапия — это не советы и не инструкции. Психолог не говорит, что делать. Он помогает понять, почему вы снова и снова оказываетесь в одной и той же точке.",
+    "*2 / 6*\n\nВ терапии можно говорить то, что неловко говорить близким. Без страха быть осуждённым, неправильно понятым или обременить другого человека.",
+    "*3 / 6*\n\nСо временем становится легче замечать свои реакции до того, как они уже произошли. Это не контроль — это понимание себя.",
+    "*4 / 6*\n\nТревога, усталость, сложности в отношениях — это редко про одну причину. Терапия помогает разобраться в том, что стоит за поверхностью.",
+    "*5 / 6*\n\nИзменения в терапии происходят постепенно. Не после одной сессии. Но в какой-то момент замечаешь, что реагируешь иначе — и это уже твоё, а не результат чьего-то совета.",
+    "*6 / 6*\n\nПервая сессия — это знакомство. Полчаса, чтобы рассказать о своём запросе и понять, подходит ли такой формат работы. Без обязательств.",
 ]
 
 
@@ -79,75 +84,86 @@ THERAPY_CARDS = [
 
 def kb_start():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Хочу разобраться в своём запросе", callback_data="choose_branch")],
-        [InlineKeyboardButton("Написать Веронике напрямую", url=CONSULTATION_URL)],
+        [InlineKeyboardButton("🔍 Хочу разобраться в своём запросе", callback_data="choose_branch")],
+        [InlineKeyboardButton("✍️ Написать мне напрямую", url=CONSULTATION_URL)],
     ])
 
 def kb_returning():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Выбрать тему", callback_data="choose_branch")],
-        [InlineKeyboardButton("Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
-        [InlineKeyboardButton("Написать Веронике", url=CONSULTATION_URL)],
+        [InlineKeyboardButton("🔍 Выбрать тему", callback_data="choose_branch")],
+        [InlineKeyboardButton("📱 Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("✍️ Написать мне", url=CONSULTATION_URL)],
     ])
 
 def kb_branches():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Тревога и страхи", callback_data="branch_anxiety")],
-        [InlineKeyboardButton("Отношения и одиночество", callback_data="branch_relations")],
-        [InlineKeyboardButton("Усталость и апатия", callback_data="branch_fatigue")],
-        [InlineKeyboardButton("Что-то не так, но не могу понять что", callback_data="branch_unclear")],
+        [InlineKeyboardButton("😰 Тревога и страхи", callback_data="branch_anxiety")],
+        [InlineKeyboardButton("💔 Отношения и одиночество", callback_data="branch_relations")],
+        [InlineKeyboardButton("🪫 Усталость и апатия", callback_data="branch_fatigue")],
+        [InlineKeyboardButton("🌫 Что-то не так, но не могу понять что", callback_data="branch_unclear")],
     ])
 
 def kb_anxiety_clarify():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Больше чувствую это в теле", callback_data="anxiety_body")],
-        [InlineKeyboardButton("Больше мысли, которые не останавливаются", callback_data="anxiety_mind")],
-        [InlineKeyboardButton("И то и другое примерно поровну", callback_data="anxiety_both")],
+        [InlineKeyboardButton("🫀 Больше чувствую это в теле", callback_data="anxiety_body")],
+        [InlineKeyboardButton("💭 Больше мысли, которые не останавливаются", callback_data="anxiety_mind")],
+        [InlineKeyboardButton("🔀 И то и другое примерно поровну", callback_data="anxiety_both")],
     ])
 
 def kb_relations_clarify():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Сложности с конкретным человеком", callback_data="relations_person")],
-        [InlineKeyboardButton("Чувствую себя одиноко, даже когда не один(а)", callback_data="relations_lonely")],
-        [InlineKeyboardButton("Не понимаю, чего хочу от отношений", callback_data="relations_unclear")],
+        [InlineKeyboardButton("👤 Сложности с конкретным человеком", callback_data="relations_person")],
+        [InlineKeyboardButton("🫂 Чувствую себя одиноко, даже когда не один(а)", callback_data="relations_lonely")],
+        [InlineKeyboardButton("❓ Не понимаю, чего хочу от отношений", callback_data="relations_unclear")],
     ])
 
 def kb_fatigue_clarify():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Нет сил, всё даётся с трудом", callback_data="fatigue_nopower")],
-        [InlineKeyboardButton("Ничего не хочется, интерес пропал", callback_data="fatigue_noint")],
-        [InlineKeyboardButton("Всё нормально, но внутри что-то не так", callback_data="fatigue_empty")],
+        [InlineKeyboardButton("😮‍💨 Нет сил, всё даётся с трудом", callback_data="fatigue_nopower")],
+        [InlineKeyboardButton("😶 Ничего не хочется, интерес пропал", callback_data="fatigue_noint")],
+        [InlineKeyboardButton("🌑 Всё нормально, но внутри что-то не так", callback_data="fatigue_empty")],
     ])
 
 def kb_unclear_clarify():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Одни и те же ситуации повторяются", callback_data="unclear_repeat")],
-        [InlineKeyboardButton("Живу не так, как хочу, но не понимаю как иначе", callback_data="unclear_lost")],
-        [InlineKeyboardButton("Просто хочу лучше понимать себя", callback_data="unclear_selfknow")],
+        [InlineKeyboardButton("🔁 Одни и те же ситуации повторяются", callback_data="unclear_repeat")],
+        [InlineKeyboardButton("🧭 Живу не так, как хочу, но не понимаю как иначе", callback_data="unclear_lost")],
+        [InlineKeyboardButton("🪞 Просто хочу лучше понимать себя", callback_data="unclear_selfknow")],
     ])
 
 def kb_after_practice():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
-        [InlineKeyboardButton("Узнать, что даёт терапия", callback_data="therapy_cards")],
-        [InlineKeyboardButton("Написать Веронике", url=CONSULTATION_URL)],
-        [InlineKeyboardButton("Задать анонимный вопрос", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("📱 Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("💬 Узнать, что даёт терапия", callback_data="therapy_cards")],
+        [InlineKeyboardButton("✍️ Написать мне", url=CONSULTATION_URL)],
+        [InlineKeyboardButton("🙋 Задать анонимный вопрос", web_app=WebAppInfo(url=MINI_APP_URL))],
     ])
 
 def kb_after_practice_unclear():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
-        [InlineKeyboardButton("Задать вопрос Веронике анонимно", web_app=WebAppInfo(url=MINI_APP_URL))],
-        [InlineKeyboardButton("Написать Веронике напрямую", url=CONSULTATION_URL)],
-        [InlineKeyboardButton("Узнать, что даёт терапия", callback_data="therapy_cards")],
+        [InlineKeyboardButton("📱 Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("🙋 Задать мне вопрос анонимно", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("✍️ Написать мне напрямую", url=CONSULTATION_URL)],
+        [InlineKeyboardButton("💬 Узнать, что даёт терапия", callback_data="therapy_cards")],
     ])
 
 def kb_therapy_next(card_index: int):
     buttons = []
     if card_index < len(THERAPY_CARDS) - 1:
         buttons.append([InlineKeyboardButton("Дальше →", callback_data=f"therapy_{card_index + 1}")])
-    buttons.append([InlineKeyboardButton("Написать Веронике", url=CONSULTATION_URL)])
+    buttons.append([InlineKeyboardButton("✍️ Написать мне", url=CONSULTATION_URL)])
     return InlineKeyboardMarkup(buttons)
+
+
+# ═══════════════════════════════════════════════
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: удалить сообщение
+# ═══════════════════════════════════════════════
+
+async def delete_message_safe(message):
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
 
 # ═══════════════════════════════════════════════
@@ -161,13 +177,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if returning:
         await update.message.reply_text(
-            "Рада, что ты снова здесь.\n\nС чего начнём?",
+            "Рада, что ты снова здесь 🤍\n\nС чего начнём?",
             reply_markup=kb_returning()
         )
     else:
         await update.message.reply_text(
-            "Привет. Это бот Вероники Пахомовой, психолога, которая работает с тревогой, отношениями и тем, что мешает чувствовать себя хорошо.\n\n"
-            "Здесь можно разобраться в том, что происходит, попробовать практики под свой запрос и при желании выйти на связь с Вероникой.\n\n"
+            "Привет 👋\n\n"
+            "Меня зовут Вероника, я психолог. Работаю с тревогой, страхами, сложностями в отношениях и тем, что мешает чувствовать себя хорошо.\n\n"
+            "В этом боте можно разобраться в том, что сейчас происходит, попробовать практики под свой запрос и при желании написать мне напрямую.\n\n"
             "С чего начнём?",
             reply_markup=kb_start()
         )
@@ -178,183 +195,210 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        if not query:
-            return
-
-        print("BUTTON CLICKED")
-        print("DATA:", query.data)
-        
-        data = query.data
-        await query.answer()
-
-    except Exception as e:
-        print("ERROR IN CALLBACK:", e)
+    query = update.callback_query
+    await query.answer()
+    data = query.data
 
     # ── Выбор ветки ──────────────────────────────
     if data == "choose_branch":
-        await query.message.reply_text(
-            "Что сейчас мешает жить спокойно?",
+        await delete_message_safe(query.message)
+        await query.message.reply_photo(
+            photo=BRANCH_IMAGE_URL,
+            caption="Что сейчас мешает жить спокойно?",
             reply_markup=kb_branches()
         )
 
     # ── Ветка: Тревога ───────────────────────────
     elif data == "branch_anxiety":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Тревога редко приходит с понятной причиной. Чаще это фоновое ощущение, что что-то пойдёт не так.\n\n"
+            "Тревога редко приходит с понятной причиной. Чаще это *фоновое ощущение*, что что-то пойдёт не так.\n\n"
             "Иногда тело реагирует раньше, чем успеваешь понять, что именно случилось: напрягаются плечи, сбивается дыхание, сердце начинает биться чуть быстрее.\n\n"
-            "Иногда это мысли, которые крутятся по кругу и не дают остановиться.\n\n"
-            "Уточни, пожалуйста.",
+            "Иногда это *мысли, которые крутятся по кругу* и не дают остановиться.\n\n"
+            "Уточни, пожалуйста 👇",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_anxiety_clarify()
         )
 
     elif data == "anxiety_body":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Когда тревога живёт в теле, первое что помогает — это вернуть себе ощущение почвы под ногами. "
+            "Когда тревога живёт в теле, первое что помогает — это *вернуть себе ощущение почвы под ногами*. "
             "Не анализировать, не разбираться с причинами, а просто немного стабилизироваться.\n\n"
-            "В приложении есть три практики, которые хорошо работают именно с этим.\n\n"
-            "Заземление 5-4-3-2-1 помогает вернуться в настоящий момент через ощущения. "
-            "Дыхание 4-7-8 замедляет нервную систему. "
-            "Прогрессивная релаксация снимает напряжение из мышц, которое накапливается незаметно.\n\n"
+            "В приложении есть три практики, которые хорошо работают именно с этим:\n\n"
+            "🌱 *Заземление 5-4-3-2-1* — возвращает в настоящий момент через ощущения\n"
+            "🌬 *Дыхание 4-7-8* — замедляет нервную систему\n"
+            "🧘 *Прогрессивная релаксация* — снимает мышечное напряжение, которое накапливается незаметно\n\n"
             "Попробуй начать с любой из них прямо сейчас.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice()
         )
 
     elif data == "anxiety_mind":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Когда голова не останавливается, обычно помогает не успокоиться, а разобрать то, что крутится. "
+            "Когда голова не останавливается, обычно помогает *не успокоиться*, а разобрать то, что крутится. "
             "Вытащить мысль наружу и посмотреть на неё чуть со стороны.\n\n"
-            "В приложении для этого есть Дневник мыслей, Декатастрофизация и За и против. "
+            "В приложении для этого есть:\n\n"
+            "📓 *Дневник мыслей* — фиксирует то, что внутри\n"
+            "🔍 *Декатастрофизация* — помогает увидеть реальный масштаб происходящего\n"
+            "⚖️ *За и против* — раскладывает ситуацию по полочкам\n\n"
             "Они устроены так, чтобы не давать советов, а помочь тебе самому(-ой) увидеть картину чуть чётче.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice()
         )
 
     elif data == "anxiety_both":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Это частое сочетание. Тело напряжено, голова работает вхолостую, и они друг друга раскручивают.\n\n"
-            "Попробуй начать с тела — когда немного снижается физическое напряжение, мысли тоже становятся чуть тише. "
-            "Дыхание 4-7-8 или Заземление 5-4-3-2-1 как первый шаг. "
-            "Потом, если захочется, Дневник мыслей или Декатастрофизация.",
+            "Это *частое сочетание*. Тело напряжено, голова работает вхолостую — и они друг друга раскручивают.\n\n"
+            "Попробуй начать с тела — когда снижается физическое напряжение, мысли тоже становятся чуть тише.\n\n"
+            "🌬 *Дыхание 4-7-8* или 🌱 *Заземление 5-4-3-2-1* как первый шаг.\n"
+            "Потом, если захочется — 📓 *Дневник мыслей* или 🔍 *Декатастрофизация*.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice()
         )
 
     # ── Ветка: Отношения ─────────────────────────
     elif data == "branch_relations":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Отношения — это одна из самых сложных тем, потому что в них всегда двое, а разбираться приходится в одиночку.\n\n"
+            "Отношения — одна из самых сложных тем, потому что в них всегда двое, а *разбираться приходится в одиночку*.\n\n"
             "Иногда это усталость от конфликтов, которые повторяются по одному сценарию. "
-            "Иногда ощущение, что тебя не слышат, или что ты сам(а) не можешь сказать то, что важно. "
-            "Иногда просто одиноко, даже когда люди рядом есть.\n\n"
-            "Что ближе к тому, что происходит у тебя?",
+            "Иногда ощущение, что тебя не слышат. "
+            "Иногда просто одиноко — даже когда люди рядом есть.\n\n"
+            "Что ближе к тому, что происходит у тебя? 👇",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_relations_clarify()
         )
 
     elif data == "relations_person":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Когда есть напряжение с кем-то конкретным, обычно помогает сначала разобраться в своей части. "
-            "Не в том, кто прав, а в том, что именно тебя задевает и почему.\n\n"
-            "В приложении для этого есть Дневник мыслей и За и против. "
-            "Дневник помогает вытащить наружу то, что крутится внутри. "
-            "За и против помогает увидеть ситуацию чуть шире, когда кажется, что выхода нет.",
+            "Когда есть напряжение с кем-то конкретным, обычно помогает сначала *разобраться в своей части*. "
+            "Не в том, кто прав — а в том, что именно тебя задевает и почему.\n\n"
+            "В приложении для этого есть:\n\n"
+            "📓 *Дневник мыслей* — вытащить наружу то, что крутится внутри\n"
+            "⚖️ *За и против* — увидеть ситуацию чуть шире, когда кажется, что выхода нет",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice()
         )
 
     elif data == "relations_lonely":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Это особенный вид одиночества. Он часто связан не с количеством людей вокруг, "
+            "Это *особенный вид одиночества*. Он часто связан не с количеством людей вокруг, "
             "а с тем, насколько ты можешь быть собой рядом с ними.\n\n"
-            "Попробуй Дневник мыслей — не чтобы найти ответ, а чтобы просто побыть с тем, что есть. "
+            "Попробуй 📓 *Дневник мыслей* — не чтобы найти ответ, а чтобы просто побыть с тем, что есть. "
             "Иногда это первый шаг к тому, чтобы понять, чего на самом деле не хватает.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice()
         )
 
     elif data == "relations_unclear":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Это честный запрос. Часто мы знаем, что что-то не так, но не можем сформулировать что именно.\n\n"
-            "В приложении есть За и против и Дневник мыслей. "
+            "Это честный запрос. Часто мы знаем, что что-то не так, но *не можем сформулировать что именно*.\n\n"
+            "В приложении есть ⚖️ *За и против* и 📓 *Дневник мыслей*. "
             "Они не дадут готового ответа, но помогут начать разбираться. "
             "Иногда этого достаточно, чтобы что-то сдвинулось.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice()
         )
 
     # ── Ветка: Усталость ─────────────────────────
     elif data == "branch_fatigue":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Усталость, которая не проходит после отдыха — это отдельное состояние. Не лень и не слабость.\n\n"
+            "Усталость, которая не проходит после отдыха — *это отдельное состояние*. Не лень и не слабость.\n\n"
             "Просто в какой-то момент сил становится меньше, чем нужно, и непонятно откуда их взять. "
             "Иногда пропадает интерес к тому, что раньше нравилось. "
             "Иногда всё как будто идёт нормально, но внутри пусто.\n\n"
-            "Что из этого ближе?",
+            "Что из этого ближе? 👇",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_fatigue_clarify()
         )
 
     elif data == "fatigue_nopower":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Когда сил мало, важно не требовать от себя больше, чем есть. "
+            "Когда сил мало, важно *не требовать от себя больше, чем есть*. "
             "Первый шаг — небольшое действие, которое даёт ощущение, что ты не стоишь на месте.\n\n"
-            "В приложении есть Поведенческая активация — практика, которая помогает постепенно возвращать себе активность без давления. "
-            "И Заряд поддержки — короткое упражнение для тех дней, когда совсем тяжело.",
+            "В приложении есть:\n\n"
+            "⚡️ *Поведенческая активация* — помогает постепенно возвращать себе активность без давления\n"
+            "🫂 *Заряд поддержки* — короткое упражнение для тех дней, когда совсем тяжело",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice()
         )
 
     elif data == "fatigue_noint":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Когда пропадает интерес, иногда это сигнал, что что-то важное долго игнорировалось. "
-            "Не обязательно что-то серьёзное, просто накопилось.\n\n"
-            "Попробуй Дневник мыслей — без задачи что-то решить, просто записать, что есть. "
-            "И Поведенческая активация помогает нащупать хотя бы небольшое действие, от которого становится чуть лучше.",
+            "Когда пропадает интерес, иногда это сигнал, что *что-то важное долго игнорировалось*. "
+            "Не обязательно что-то серьёзное — просто накопилось.\n\n"
+            "Попробуй 📓 *Дневник мыслей* — без задачи что-то решить, просто записать, что есть.\n"
+            "И ⚡️ *Поведенческая активация* помогает нащупать хотя бы небольшое действие, от которого становится чуть лучше.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice()
         )
 
     elif data == "fatigue_empty":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
             "Это состояние трудно объяснить другим, потому что внешне всё выглядит нормально. "
-            "Но ты сам(а) чувствуешь, что что-то не так — и этого достаточно, чтобы разобраться.\n\n"
-            "Начни с трекера настроения в приложении — он помогает замечать, в какие моменты становится лучше или хуже. "
+            "Но *ты сам(а) чувствуешь, что что-то не так* — и этого достаточно, чтобы разобраться.\n\n"
+            "Начни с 📊 *трекера настроения* в приложении — он помогает замечать, в какие моменты становится лучше или хуже. "
             "Иногда это первая подсказка о том, что именно влияет на состояние.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice()
         )
 
     # ── Ветка: Не понимаю что ────────────────────
     elif data == "branch_unclear":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Иногда нет конкретной проблемы, но есть ощущение, что что-то идёт не так. "
+            "Иногда нет конкретной проблемы, но есть *ощущение, что что-то идёт не так*. "
             "Или что живёшь немного не своей жизнью. "
-            "Или просто хочется понять себя лучше — почему реагируешь именно так, почему одни ситуации повторяются, чего на самом деле хочешь.\n\n"
+            "Или просто хочется понять себя лучше — почему реагируешь именно так, почему одни ситуации повторяются.\n\n"
             "Это не менее важный запрос, чем любой другой.\n\n"
-            "Расскажи немного больше. Что сейчас вызывает это ощущение?",
+            "Расскажи немного больше 👇",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_unclear_clarify()
         )
 
     elif data == "unclear_repeat":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Когда что-то повторяется, обычно есть паттерн, который сложно увидеть изнутри. "
-            "Не потому что ты его не замечаешь, а потому что он кажется нормой.\n\n"
-            "Начни с Дневника мыслей — записывай, что происходит в моменты, которые тебя задевают. "
+            "Когда что-то повторяется, обычно есть паттерн, который *сложно увидеть изнутри*. "
+            "Не потому что ты его не замечаешь — а потому что он кажется нормой.\n\n"
+            "Начни с 📓 *Дневника мыслей* — записывай, что происходит в моменты, которые тебя задевают. "
             "Не чтобы анализировать, а просто фиксировать. "
             "Со временем начинают проявляться связи, которые раньше не были заметны.\n\n"
-            "Также в приложении есть анонимные вопросы к Веронике. "
-            "Если что-то конкретное не даёт покоя — можно спросить там.",
+            "Также в приложении есть 🙋 *анонимные вопросы к Веронике* — если что-то конкретное не даёт покоя.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice_unclear()
         )
 
     elif data == "unclear_lost":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Это ощущение появляется, когда между тем, что есть, и тем, чего хочется, накапливается расстояние. "
+            "Это ощущение появляется, когда между тем, что есть, и тем, чего хочется, *накапливается расстояние*. "
             "Иногда это про работу, иногда про отношения, иногда просто про то, как проходят дни.\n\n"
-            "Практика За и против помогает разложить по полочкам конкретную ситуацию, если она есть. "
-            "Если ситуация размытая — начни с Дневника мыслей. "
+            "⚖️ *За и против* помогает разложить по полочкам конкретную ситуацию, если она есть.\n"
+            "Если ситуация размытая — начни с 📓 *Дневника мыслей*. "
             "Иногда нужно просто дать себе место, чтобы это сформулировать.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice_unclear()
         )
 
     elif data == "unclear_selfknow":
+        await delete_message_safe(query.message)
         await query.message.reply_text(
-            "Хорошая отправная точка — трекер настроения. "
+            "Хорошая отправная точка — 📊 *трекер настроения*. "
             "Он помогает замечать, что влияет на твоё состояние, и постепенно выстраивать картину.\n\n"
-            "Если хочется копнуть глубже — в приложении есть Дневник мыслей и Декатастрофизация. "
-            "И анонимные вопросы к Веронике, если что-то конкретное хочется спросить у специалиста.",
+            "Если хочется копнуть глубже — в приложении есть 📓 *Дневник мыслей* и 🔍 *Декатастрофизация*.\n"
+            "И 🙋 *анонимные вопросы к Веронике*, если что-то конкретное хочется спросить у специалиста.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_after_practice_unclear()
         )
 
@@ -362,6 +406,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "therapy_cards":
         await query.message.reply_text(
             THERAPY_CARDS[0],
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_therapy_next(0)
         )
 
@@ -370,6 +415,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if index < len(THERAPY_CARDS):
             await query.message.reply_text(
                 THERAPY_CARDS[index],
+                parse_mode=ParseMode.MARKDOWN,
                 reply_markup=kb_therapy_next(index)
             )
 
@@ -383,9 +429,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             document=GUIDE_FILE_ID,
             caption="7 шагов для преодоления прокрастинации 📎"
         )
-        db = load_db()
-        if str(user_id) not in db:
-            save_user(user_id)
+        save_user(user_id)
 
 
 # ═══════════════════════════════════════════════
@@ -460,7 +504,7 @@ async def check_mood_reminders(context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
     today = datetime.now().strftime("%Y-%m-%d")
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("Отметить состояние", web_app=WebAppInfo(url=MINI_APP_URL))
+        InlineKeyboardButton("📊 Отметить состояние", web_app=WebAppInfo(url=MINI_APP_URL))
     ]])
     for user_id_str, data in db.items():
         if not data.get("notifications_enabled", True):
@@ -482,36 +526,33 @@ async def check_mood_reminders(context: ContextTypes.DEFAULT_TYPE):
 # ВСПОМОГАТЕЛЬНЫЕ КОМАНДЫ
 # ═══════════════════════════════════════════════
 
-HELP_TEXT = """Вот что есть в этом боте
-
-Практики и инструменты — приложение открывается прямо в Telegram. Есть упражнения для расслабления, работы с мыслями и восстановления энергии, трекер настроения и анонимные вопросы к Веронике.
-
-Гайд — бесплатный материал «7 шагов от прокрастинации».
-
-Консультация — индивидуальная работа в формате серии сессий. Если хочешь разобраться в своей ситуации глубже — напиши Веронике напрямую.
-
-Если что-то не работает — пиши @pa_nicka"""
+HELP_TEXT = (
+    "*Что есть в этом боте*\n\n"
+    "📱 *Приложение* — практики для расслабления, работы с мыслями и восстановления энергии, трекер настроения и анонимные вопросы к Веронике\n\n"
+    "📎 *Гайд* — бесплатный материал «7 шагов от прокрастинации»\n\n"
+    "🗓 *Консультация* — индивидуальная работа в формате серии сессий. Если хочешь разобраться в своей ситуации глубже — напиши Веронике напрямую\n\n"
+    "Если что-то не работает — пиши @pa\_nicka"
+)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
-        [InlineKeyboardButton("Скачать гайд", callback_data="download_guide")],
-        [InlineKeyboardButton("Написать Веронике", url=CONSULTATION_URL)],
+        [InlineKeyboardButton("📱 Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("📎 Скачать гайд", callback_data="download_guide")],
+        [InlineKeyboardButton("✍️ Написать Веронике", url=CONSULTATION_URL)],
     ])
-    await update.message.reply_text(HELP_TEXT, reply_markup=keyboard)
+    await update.message.reply_text(HELP_TEXT, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != YOUR_TELEGRAM_ID:
         return
     db = load_db()
     total = len(db)
-    with_guide = len([u for u in db.values() if "downloaded_at" in u])
     notifications_off = len([u for u in db.values() if not u.get("notifications_enabled", True)])
     await update.message.reply_text(
-        f"Статистика\n\n"
+        f"*Статистика*\n\n"
         f"Всего пользователей: {total}\n"
-        f"Скачали гайд: {with_guide}\n"
-        f"Отключили уведомления: {notifications_off}"
+        f"Отключили уведомления: {notifications_off}",
+        parse_mode=ParseMode.MARKDOWN
     )
 
 async def upload_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -536,14 +577,14 @@ async def receive_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config["guide_file_id"] = file_id
     with open("config.json", "w") as f:
         json.dump(config, f)
-    await update.message.reply_text("Гайд сохранён и сразу доступен пользователям.")
+    await update.message.reply_text("Гайд сохранён и сразу доступен пользователям ✅")
 
 async def test_notify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != YOUR_TELEGRAM_ID:
         return
     await update.message.reply_text("Запускаю проверку напоминаний...")
     await check_mood_reminders(context)
-    await update.message.reply_text("Готово.")
+    await update.message.reply_text("Готово ✅")
 
 
 # ═══════════════════════════════════════════════
@@ -585,3 +626,4 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
+ENDOFFILE
