@@ -19,7 +19,6 @@ CONSULTATION_URL = "https://t.me/pa_nicka"
 CHANNEL_URL = "https://t.me/potom_podumay"
 YOUR_TELEGRAM_ID = 451210923
 API_PORT = 8080
-DELAY_AFTER_GUIDE_HOURS = 1
 # ─────────────────────────────────────────────
 
 GUIDE_FILE_ID = None
@@ -45,14 +44,6 @@ def save_db(data):
     with open(DB_FILE, "w") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-def mark_guide_downloaded(user_id: int):
-    db = load_db()
-    db[str(user_id)] = {
-        "downloaded_at": datetime.now().isoformat(),
-        "funnel_step": 0,
-        "notifications_enabled": True
-    }
-    save_db(db)
 
 def is_returning_user(user_id: int) -> bool:
     db = load_db()
@@ -384,7 +375,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         db = load_db()
         if str(user_id) not in db:
-            mark_guide_downloaded(user_id)
+            save_user(user_id)
 
 
 # ═══════════════════════════════════════════════
@@ -475,65 +466,6 @@ async def check_mood_reminders(context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception as e:
             logging.warning(f"Ошибка напоминания пользователю {user_id_str}: {e}")
-
-
-# ═══════════════════════════════════════════════
-# ВОРОНКА (сохраняем для обратной совместимости)
-# ═══════════════════════════════════════════════
-
-FUNNEL_MESSAGES = [
-    (
-        DELAY_AFTER_GUIDE_HOURS,
-        "Гайд у тебя 📎\n\nОдин совет: не пытайся внедрить все 7 шагов сразу. Выбери один — тот, что откликнулся больше всего — и попробуй именно его на этой неделе.\n\nМаленький реальный шаг работает лучше большого плана.",
-        None
-    ),
-    (
-        24,
-        "Прокрастинация почти никогда не про лень.\n\nЗа ней обычно стоит что-то конкретное: страх не справиться, перфекционизм, усталость которую не замечаешь, или задача которая просто не твоя.\n\nПопробуй сегодня спросить себя: что именно я откладываю — и что я на самом деле чувствую по отношению к этому?",
-        InlineKeyboardMarkup([[InlineKeyboardButton("Попробовать практику", web_app=WebAppInfo(url=MINI_APP_URL))]])
-    ),
-    (
-        72,
-        "Есть один момент, про который редко говорят.\n\nПрокрастинация часто усиливается, когда мы слишком строги к себе. Чем больше ругаем — тем сильнее избегание.\n\nЭто не значит «разреши себе всё». Это значит — попробуй отнестись к себе так, как отнёсся бы к другу в похожей ситуации.",
-        InlineKeyboardMarkup([[InlineKeyboardButton("Открыть практики", web_app=WebAppInfo(url=MINI_APP_URL))]])
-    ),
-    (
-        120,
-        "Если после гайда что-то сдвинулось — здорово. Если нет — это тоже нормально.\n\nИногда паттерны уходят корнями глубже, чем любая техника может достать. Это не повод расстраиваться — просто повод копнуть глубже.\n\nЯ работаю с этим в индивидуальном формате — если захочется разобраться именно в своём случае, ты знаешь где меня найти 🤍",
-        InlineKeyboardMarkup([[InlineKeyboardButton("Записаться к Веронике", url=CONSULTATION_URL)]])
-    ),
-    (
-        168,
-        f"Надеюсь, что-то из гайда и этих заметок оказалось полезным. Забирай что откликнулось, остальное оставь.\n\nЕсли захочешь продолжить — больше материалов в канале: {CHANNEL_URL}\nЕсли захочешь поработать лично — @pa_nicka",
-        None
-    ),
-]
-
-async def check_funnel(context: ContextTypes.DEFAULT_TYPE):
-    db = load_db()
-    now = datetime.now()
-    changed = False
-    for user_id_str, data in db.items():
-        if "downloaded_at" not in data:
-            continue
-        downloaded_at = datetime.fromisoformat(data["downloaded_at"])
-        hours_passed = (now - downloaded_at).total_seconds() / 3600
-        current_step = data.get("funnel_step", 0)
-        for step_index, (hours_threshold, text, keyboard) in enumerate(FUNNEL_MESSAGES):
-            if hours_passed >= hours_threshold and current_step <= step_index:
-                try:
-                    await context.bot.send_message(
-                        chat_id=int(user_id_str),
-                        text=text,
-                        reply_markup=keyboard
-                    )
-                    db[user_id_str]["funnel_step"] = step_index + 1
-                    changed = True
-                except Exception as e:
-                    logging.warning(f"Ошибка воронки пользователю {user_id_str}: {e}")
-                break
-    if changed:
-        save_db(db)
 
 
 # ═══════════════════════════════════════════════
@@ -630,8 +562,6 @@ async def main_async():
     app.add_handler(CommandHandler("testnotify", test_notify))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.Document.PDF, receive_document))
-
-    app.job_queue.run_repeating(check_funnel, interval=1800, first=10)
 
     from datetime import time as dtime
     app.job_queue.run_daily(check_mood_reminders, time=dtime(hour=17, minute=0, tzinfo=timezone.utc))
