@@ -1,4 +1,4 @@
-cat > /home/claude/bot.py << 'ENDOFFILE'
+
 import logging
 import json
 import os
