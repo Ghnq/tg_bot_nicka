@@ -178,14 +178,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
+    try:
+        query = update.callback_query
+        if not query:
+            return
 
-    print("BUTTON CLICKED")
-    print("DATA:", query.data)
+        print("BUTTON CLICKED")
+        print("DATA:", query.data)
 
-    await query.answer()
+        await query.answer()
 
-    data = query.data
+        data = query.data
+
+        await query.message.reply_text("DEBUG: " + data)
+
+    except Exception as e:
+        print("ERROR IN CALLBACK:", e)
 
     # ── Выбор ветки ──────────────────────────────
     if data == "choose_branch":
