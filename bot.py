@@ -188,10 +188,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.answer()
 
-        data = query.data
-
-        await query.message.reply_text("DEBUG: " + data)
-
     except Exception as e:
         print("ERROR IN CALLBACK:", e)
 
