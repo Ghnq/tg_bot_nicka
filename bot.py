@@ -11,18 +11,14 @@ from telegram.ext import (
 )
 
 # ─────────────────────────────────────────────
-# НАСТРОЙКИ — замени на свои значения
+# НАСТРОЙКИ
 # ─────────────────────────────────────────────
 BOT_TOKEN = "8173562858:AAGy1aRrvBuUO1ebS8Q_0krdpexdxFWGu8M"
 MINI_APP_URL = "https://veronickaapp.lovable.app"
 CONSULTATION_URL = "https://t.me/pa_nicka"
 CHANNEL_URL = "https://t.me/potom_podumay"
 YOUR_TELEGRAM_ID = 451210923
-
-# Порт на котором будет слушать API-сервер
 API_PORT = 8080
-
-# Задержка перед первым сообщением воронки (в часах)
 DELAY_AFTER_GUIDE_HOURS = 1
 # ─────────────────────────────────────────────
 
@@ -54,201 +50,393 @@ def mark_guide_downloaded(user_id: int):
     db[str(user_id)] = {
         "downloaded_at": datetime.now().isoformat(),
         "funnel_step": 0,
-        "notifications_enabled": True  # по умолчанию включены
+        "notifications_enabled": True
     }
     save_db(db)
 
+def is_returning_user(user_id: int) -> bool:
+    db = load_db()
+    return str(user_id) in db
+
+def save_user(user_id: int):
+    db = load_db()
+    if str(user_id) not in db:
+        db[str(user_id)] = {
+            "first_seen": datetime.now().isoformat(),
+            "notifications_enabled": True
+        }
+        save_db(db)
+
 
 # ═══════════════════════════════════════════════
-# ТЕКСТЫ ВОРОНКИ
-# Структура: (через сколько часов, текст, кнопка или None)
+# ТЕКСТЫ — КАРТОЧКИ "ЧТО ДАЁТ ТЕРАПИЯ"
 # ═══════════════════════════════════════════════
 
-FUNNEL_MESSAGES = [
-    (
-        DELAY_AFTER_GUIDE_HOURS,
-        """Гайд у тебя 📎
-
-Один совет: не пытайся внедрить все 7 шагов сразу. Выбери один — тот, что откликнулся больше всего — и попробуй именно его на этой неделе.
-
-Маленький реальный шаг работает лучше большого плана.""",
-        None
-    ),
-    (
-        24,
-        """Прокрастинация почти никогда не про лень.
-
-За ней обычно стоит что-то конкретное: страх не справиться, перфекционизм, усталость которую не замечаешь, или задача которая просто не твоя.
-
-Попробуй сегодня спросить себя: что именно я откладываю — и что я на самом деле чувствую по отношению к этому?
-
-Ответ может удивить.""",
-        InlineKeyboardMarkup([[
-            InlineKeyboardButton("🧘 Попробовать практику", web_app=WebAppInfo(url=MINI_APP_URL))
-        ]])
-    ),
-    (
-        72,
-        """Есть один момент, про который редко говорят.
-
-Прокрастинация часто усиливается, когда мы слишком строги к себе. Чем больше ругаем — тем сильнее избегание.
-
-Это не значит "разреши себе всё". Это значит — попробуй отнестись к себе так, как отнёсся бы к другу в похожей ситуации. Без осуждения, но честно.""",
-        InlineKeyboardMarkup([[
-            InlineKeyboardButton("🧘 Открыть практики", web_app=WebAppInfo(url=MINI_APP_URL))
-        ]])
-    ),
-    (
-        120,
-        """Если после гайда что-то сдвинулось — здорово. Если нет — это тоже нормально.
-
-Иногда паттерны уходят корнями глубже, чем любая техника может достать. Это не повод расстраиваться — просто повод копнуть глубже.
-
-Я работаю с этим в индивидуальном формате — если когда-нибудь захочется разобраться именно в своём случае, ты знаешь где меня найти 🤍""",
-        InlineKeyboardMarkup([[
-            InlineKeyboardButton("💬 Записаться к Веронике", url=CONSULTATION_URL)
-        ]])
-    ),
-    (
-        168,
-        """
-
-Надеюсь, что-то из гайда и этих заметок оказалось полезным. Забирай что откликнулось, остальное оставь.
-
-Если захочешь продолжить — больше материалов в канале: https://t.me/potom_podumay
-Если захочешь поработать лично — @pa_nicka""",
-        None
-    ),
+THERAPY_CARDS = [
+    "1/6  Терапия — это не советы и не инструкции. Психолог не говорит, что делать. Он помогает понять, почему вы снова и снова оказываетесь в одной и той же точке.",
+    "2/6  В терапии можно говорить то, что неловко говорить близким. Без страха быть осуждённым, неправильно понятым или обременить другого человека.",
+    "3/6  Со временем становится легче замечать свои реакции до того, как они уже произошли. Это не контроль — это понимание себя.",
+    "4/6  Тревога, усталость, сложности в отношениях — это редко про одну причину. Терапия помогает разобраться в том, что стоит за поверхностью.",
+    "5/6  Изменения в терапии происходят постепенно. Не после одной сессии. Но в какой-то момент замечаешь, что реагируешь иначе — и это уже твоё, а не результат чьего-то совета.",
+    "6/6  Первая сессия с Вероникой — это знакомство. Полчаса, чтобы рассказать о своём запросе и понять, подходит ли такой формат работы. Без обязательств.",
 ]
 
 
 # ═══════════════════════════════════════════════
-# API-СЕРВЕР ДЛЯ МИНИ-ПРИЛОЖЕНИЯ
-# Принимает запросы на включение/отключение уведомлений
+# КЛАВИАТУРЫ
+# ═══════════════════════════════════════════════
+
+def kb_start():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Хочу разобраться в своём запросе", callback_data="choose_branch")],
+        [InlineKeyboardButton("Написать Веронике напрямую", url=CONSULTATION_URL)],
+    ])
+
+def kb_returning():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Выбрать тему", callback_data="choose_branch")],
+        [InlineKeyboardButton("Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("Написать Веронике", url=CONSULTATION_URL)],
+    ])
+
+def kb_branches():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Тревога и страхи", callback_data="branch_anxiety")],
+        [InlineKeyboardButton("Отношения и одиночество", callback_data="branch_relations")],
+        [InlineKeyboardButton("Усталость и апатия", callback_data="branch_fatigue")],
+        [InlineKeyboardButton("Что-то не так, но не могу понять что", callback_data="branch_unclear")],
+    ])
+
+def kb_anxiety_clarify():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Больше чувствую это в теле", callback_data="anxiety_body")],
+        [InlineKeyboardButton("Больше мысли, которые не останавливаются", callback_data="anxiety_mind")],
+        [InlineKeyboardButton("И то и другое примерно поровну", callback_data="anxiety_both")],
+    ])
+
+def kb_relations_clarify():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Сложности с конкретным человеком", callback_data="relations_person")],
+        [InlineKeyboardButton("Чувствую себя одиноко, даже когда не один(а)", callback_data="relations_lonely")],
+        [InlineKeyboardButton("Не понимаю, чего хочу от отношений", callback_data="relations_unclear")],
+    ])
+
+def kb_fatigue_clarify():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Нет сил, всё даётся с трудом", callback_data="fatigue_nopower")],
+        [InlineKeyboardButton("Ничего не хочется, интерес пропал", callback_data="fatigue_noint")],
+        [InlineKeyboardButton("Всё нормально, но внутри что-то не так", callback_data="fatigue_empty")],
+    ])
+
+def kb_unclear_clarify():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Одни и те же ситуации повторяются", callback_data="unclear_repeat")],
+        [InlineKeyboardButton("Живу не так, как хочу, но не понимаю как иначе", callback_data="unclear_lost")],
+        [InlineKeyboardButton("Просто хочу лучше понимать себя", callback_data="unclear_selfknow")],
+    ])
+
+def kb_after_practice():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("Узнать, что даёт терапия", callback_data="therapy_cards")],
+        [InlineKeyboardButton("Написать Веронике", url=CONSULTATION_URL)],
+        [InlineKeyboardButton("Задать анонимный вопрос", web_app=WebAppInfo(url=MINI_APP_URL))],
+    ])
+
+def kb_after_practice_unclear():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("Задать вопрос Веронике анонимно", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("Написать Веронике напрямую", url=CONSULTATION_URL)],
+        [InlineKeyboardButton("Узнать, что даёт терапия", callback_data="therapy_cards")],
+    ])
+
+def kb_therapy_next(card_index: int):
+    buttons = []
+    if card_index < len(THERAPY_CARDS) - 1:
+        buttons.append([InlineKeyboardButton("Дальше →", callback_data=f"therapy_{card_index + 1}")])
+    buttons.append([InlineKeyboardButton("Написать Веронике", url=CONSULTATION_URL)])
+    return InlineKeyboardMarkup(buttons)
+
+
+# ═══════════════════════════════════════════════
+# КОМАНДА /start
+# ═══════════════════════════════════════════════
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    returning = is_returning_user(user_id)
+    save_user(user_id)
+
+    if returning:
+        await update.message.reply_text(
+            "Рада, что ты снова здесь.\n\nС чего начнём?",
+            reply_markup=kb_returning()
+        )
+    else:
+        await update.message.reply_text(
+            "Привет. Это бот Вероники Пахомовой, психолога, которая работает с тревогой, отношениями и тем, что мешает чувствовать себя хорошо.\n\n"
+            "Здесь можно разобраться в том, что происходит, попробовать практики под свой запрос и при желании выйти на связь с Вероникой.\n\n"
+            "С чего начнём?",
+            reply_markup=kb_start()
+        )
+
+
+# ═══════════════════════════════════════════════
+# ОБРАБОТЧИК CALLBACK-КНОПОК
+# ═══════════════════════════════════════════════
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    # ── Выбор ветки ──────────────────────────────
+    if data == "choose_branch":
+        await query.message.reply_text(
+            "Что сейчас мешает жить спокойно?",
+            reply_markup=kb_branches()
+        )
+
+    # ── Ветка: Тревога ───────────────────────────
+    elif data == "branch_anxiety":
+        await query.message.reply_text(
+            "Тревога редко приходит с понятной причиной. Чаще это фоновое ощущение, что что-то пойдёт не так.\n\n"
+            "Иногда тело реагирует раньше, чем успеваешь понять, что именно случилось: напрягаются плечи, сбивается дыхание, сердце начинает биться чуть быстрее.\n\n"
+            "Иногда это мысли, которые крутятся по кругу и не дают остановиться.\n\n"
+            "Уточни, пожалуйста.",
+            reply_markup=kb_anxiety_clarify()
+        )
+
+    elif data == "anxiety_body":
+        await query.message.reply_text(
+            "Когда тревога живёт в теле, первое что помогает — это вернуть себе ощущение почвы под ногами. "
+            "Не анализировать, не разбираться с причинами, а просто немного стабилизироваться.\n\n"
+            "В приложении есть три практики, которые хорошо работают именно с этим.\n\n"
+            "Заземление 5-4-3-2-1 помогает вернуться в настоящий момент через ощущения. "
+            "Дыхание 4-7-8 замедляет нервную систему. "
+            "Прогрессивная релаксация снимает напряжение из мышц, которое накапливается незаметно.\n\n"
+            "Попробуй начать с любой из них прямо сейчас.",
+            reply_markup=kb_after_practice()
+        )
+
+    elif data == "anxiety_mind":
+        await query.message.reply_text(
+            "Когда голова не останавливается, обычно помогает не успокоиться, а разобрать то, что крутится. "
+            "Вытащить мысль наружу и посмотреть на неё чуть со стороны.\n\n"
+            "В приложении для этого есть Дневник мыслей, Декатастрофизация и За и против. "
+            "Они устроены так, чтобы не давать советов, а помочь тебе самому(-ой) увидеть картину чуть чётче.",
+            reply_markup=kb_after_practice()
+        )
+
+    elif data == "anxiety_both":
+        await query.message.reply_text(
+            "Это частое сочетание. Тело напряжено, голова работает вхолостую, и они друг друга раскручивают.\n\n"
+            "Попробуй начать с тела — когда немного снижается физическое напряжение, мысли тоже становятся чуть тише. "
+            "Дыхание 4-7-8 или Заземление 5-4-3-2-1 как первый шаг. "
+            "Потом, если захочется, Дневник мыслей или Декатастрофизация.",
+            reply_markup=kb_after_practice()
+        )
+
+    # ── Ветка: Отношения ─────────────────────────
+    elif data == "branch_relations":
+        await query.message.reply_text(
+            "Отношения — это одна из самых сложных тем, потому что в них всегда двое, а разбираться приходится в одиночку.\n\n"
+            "Иногда это усталость от конфликтов, которые повторяются по одному сценарию. "
+            "Иногда ощущение, что тебя не слышат, или что ты сам(а) не можешь сказать то, что важно. "
+            "Иногда просто одиноко, даже когда люди рядом есть.\n\n"
+            "Что ближе к тому, что происходит у тебя?",
+            reply_markup=kb_relations_clarify()
+        )
+
+    elif data == "relations_person":
+        await query.message.reply_text(
+            "Когда есть напряжение с кем-то конкретным, обычно помогает сначала разобраться в своей части. "
+            "Не в том, кто прав, а в том, что именно тебя задевает и почему.\n\n"
+            "В приложении для этого есть Дневник мыслей и За и против. "
+            "Дневник помогает вытащить наружу то, что крутится внутри. "
+            "За и против помогает увидеть ситуацию чуть шире, когда кажется, что выхода нет.",
+            reply_markup=kb_after_practice()
+        )
+
+    elif data == "relations_lonely":
+        await query.message.reply_text(
+            "Это особенный вид одиночества. Он часто связан не с количеством людей вокруг, "
+            "а с тем, насколько ты можешь быть собой рядом с ними.\n\n"
+            "Попробуй Дневник мыслей — не чтобы найти ответ, а чтобы просто побыть с тем, что есть. "
+            "Иногда это первый шаг к тому, чтобы понять, чего на самом деле не хватает.",
+            reply_markup=kb_after_practice()
+        )
+
+    elif data == "relations_unclear":
+        await query.message.reply_text(
+            "Это честный запрос. Часто мы знаем, что что-то не так, но не можем сформулировать что именно.\n\n"
+            "В приложении есть За и против и Дневник мыслей. "
+            "Они не дадут готового ответа, но помогут начать разбираться. "
+            "Иногда этого достаточно, чтобы что-то сдвинулось.",
+            reply_markup=kb_after_practice()
+        )
+
+    # ── Ветка: Усталость ─────────────────────────
+    elif data == "branch_fatigue":
+        await query.message.reply_text(
+            "Усталость, которая не проходит после отдыха — это отдельное состояние. Не лень и не слабость.\n\n"
+            "Просто в какой-то момент сил становится меньше, чем нужно, и непонятно откуда их взять. "
+            "Иногда пропадает интерес к тому, что раньше нравилось. "
+            "Иногда всё как будто идёт нормально, но внутри пусто.\n\n"
+            "Что из этого ближе?",
+            reply_markup=kb_fatigue_clarify()
+        )
+
+    elif data == "fatigue_nopower":
+        await query.message.reply_text(
+            "Когда сил мало, важно не требовать от себя больше, чем есть. "
+            "Первый шаг — небольшое действие, которое даёт ощущение, что ты не стоишь на месте.\n\n"
+            "В приложении есть Поведенческая активация — практика, которая помогает постепенно возвращать себе активность без давления. "
+            "И Заряд поддержки — короткое упражнение для тех дней, когда совсем тяжело.",
+            reply_markup=kb_after_practice()
+        )
+
+    elif data == "fatigue_noint":
+        await query.message.reply_text(
+            "Когда пропадает интерес, иногда это сигнал, что что-то важное долго игнорировалось. "
+            "Не обязательно что-то серьёзное, просто накопилось.\n\n"
+            "Попробуй Дневник мыслей — без задачи что-то решить, просто записать, что есть. "
+            "И Поведенческая активация помогает нащупать хотя бы небольшое действие, от которого становится чуть лучше.",
+            reply_markup=kb_after_practice()
+        )
+
+    elif data == "fatigue_empty":
+        await query.message.reply_text(
+            "Это состояние трудно объяснить другим, потому что внешне всё выглядит нормально. "
+            "Но ты сам(а) чувствуешь, что что-то не так — и этого достаточно, чтобы разобраться.\n\n"
+            "Начни с трекера настроения в приложении — он помогает замечать, в какие моменты становится лучше или хуже. "
+            "Иногда это первая подсказка о том, что именно влияет на состояние.",
+            reply_markup=kb_after_practice()
+        )
+
+    # ── Ветка: Не понимаю что ────────────────────
+    elif data == "branch_unclear":
+        await query.message.reply_text(
+            "Иногда нет конкретной проблемы, но есть ощущение, что что-то идёт не так. "
+            "Или что живёшь немного не своей жизнью. "
+            "Или просто хочется понять себя лучше — почему реагируешь именно так, почему одни ситуации повторяются, чего на самом деле хочешь.\n\n"
+            "Это не менее важный запрос, чем любой другой.\n\n"
+            "Расскажи немного больше. Что сейчас вызывает это ощущение?",
+            reply_markup=kb_unclear_clarify()
+        )
+
+    elif data == "unclear_repeat":
+        await query.message.reply_text(
+            "Когда что-то повторяется, обычно есть паттерн, который сложно увидеть изнутри. "
+            "Не потому что ты его не замечаешь, а потому что он кажется нормой.\n\n"
+            "Начни с Дневника мыслей — записывай, что происходит в моменты, которые тебя задевают. "
+            "Не чтобы анализировать, а просто фиксировать. "
+            "Со временем начинают проявляться связи, которые раньше не были заметны.\n\n"
+            "Также в приложении есть анонимные вопросы к Веронике. "
+            "Если что-то конкретное не даёт покоя — можно спросить там.",
+            reply_markup=kb_after_practice_unclear()
+        )
+
+    elif data == "unclear_lost":
+        await query.message.reply_text(
+            "Это ощущение появляется, когда между тем, что есть, и тем, чего хочется, накапливается расстояние. "
+            "Иногда это про работу, иногда про отношения, иногда просто про то, как проходят дни.\n\n"
+            "Практика За и против помогает разложить по полочкам конкретную ситуацию, если она есть. "
+            "Если ситуация размытая — начни с Дневника мыслей. "
+            "Иногда нужно просто дать себе место, чтобы это сформулировать.",
+            reply_markup=kb_after_practice_unclear()
+        )
+
+    elif data == "unclear_selfknow":
+        await query.message.reply_text(
+            "Хорошая отправная точка — трекер настроения. "
+            "Он помогает замечать, что влияет на твоё состояние, и постепенно выстраивать картину.\n\n"
+            "Если хочется копнуть глубже — в приложении есть Дневник мыслей и Декатастрофизация. "
+            "И анонимные вопросы к Веронике, если что-то конкретное хочется спросить у специалиста.",
+            reply_markup=kb_after_practice_unclear()
+        )
+
+    # ── Карточки "Что даёт терапия" ──────────────
+    elif data == "therapy_cards":
+        await query.message.reply_text(
+            THERAPY_CARDS[0],
+            reply_markup=kb_therapy_next(0)
+        )
+
+    elif data.startswith("therapy_"):
+        index = int(data.split("_")[1])
+        if index < len(THERAPY_CARDS):
+            await query.message.reply_text(
+                THERAPY_CARDS[index],
+                reply_markup=kb_therapy_next(index)
+            )
+
+    # ── Скачать гайд ─────────────────────────────
+    elif data == "download_guide":
+        user_id = query.from_user.id
+        if not GUIDE_FILE_ID:
+            await query.message.reply_text("Гайд скоро появится здесь. Следи за обновлениями.")
+            return
+        await query.message.reply_document(
+            document=GUIDE_FILE_ID,
+            caption="7 шагов для преодоления прокрастинации 📎"
+        )
+        db = load_db()
+        if str(user_id) not in db:
+            mark_guide_downloaded(user_id)
+
+
+# ═══════════════════════════════════════════════
+# API-СЕРВЕР
 # ═══════════════════════════════════════════════
 
 async def handle_notifications(request):
-    """
-    POST /notifications
-    { "user_id": 123456789, "enabled": true }
-    """
     try:
         data = await request.json()
         user_id = str(data.get("user_id"))
         enabled = bool(data.get("enabled", True))
-
         if not user_id:
             return web.json_response({"ok": False, "error": "user_id required"}, status=400)
-
         db = load_db()
         if user_id not in db:
-            # Пользователь ещё не в базе (не скачивал гайд) — создаём запись
             db[user_id] = {"notifications_enabled": enabled}
         else:
             db[user_id]["notifications_enabled"] = enabled
         save_db(db)
-
-        status = "включены" if enabled else "отключены"
-        logging.info(f"Уведомления {status} для пользователя {user_id}")
         return web.json_response({"ok": True, "notifications_enabled": enabled})
-
     except Exception as e:
-        logging.error(f"Ошибка в handle_notifications: {e}")
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
-
 async def handle_notifications_status(request):
-    """
-    GET /notifications?user_id=123456789
-    Возвращает текущий статус уведомлений — мини-приложение может
-    прочитать его при загрузке, чтобы показать правильное состояние тоггла.
-    """
     user_id = str(request.rel_url.query.get("user_id", ""))
     if not user_id:
         return web.json_response({"ok": False, "error": "user_id required"}, status=400)
-
     db = load_db()
     enabled = db.get(user_id, {}).get("notifications_enabled", True)
     return web.json_response({"ok": True, "notifications_enabled": enabled})
 
-
 async def handle_mood_checkin(request):
-    """
-    POST /mood-checkin
-    { "user_id": 123456789, "date": "2024-01-15" }
-    Приложение вызывает это при каждой записи настроения.
-    """
     try:
         data = await request.json()
         user_id = str(data.get("user_id"))
-        date = data.get("date")  # формат YYYY-MM-DD
-
+        date = data.get("date")
         if not user_id or not date:
             return web.json_response({"ok": False, "error": "user_id and date required"}, status=400)
-
         db = load_db()
         if user_id not in db:
             db[user_id] = {}
         db[user_id]["last_checkin"] = date
         save_db(db)
-
-        logging.info(f"Запись настроения от {user_id} за {date}")
         return web.json_response({"ok": True})
-
     except Exception as e:
-        logging.error(f"Ошибка в handle_mood_checkin: {e}")
         return web.json_response({"ok": False, "error": str(e)}, status=500)
-
-
-# ═══════════════════════════════════════════════
-# ПЛАНИРОВЩИК НАПОМИНАНИЙ О НАСТРОЕНИИ
-# Запускается каждый день в 20:00
-# Шлёт уведомление тем, кто не делал запись сегодня
-# и у кого включены уведомления
-# ═══════════════════════════════════════════════
-
-MOOD_REMINDER_TEXTS = [
-    "Привет 🌙 Ты сегодня ещё не проверяла своё состояние.\n\nПара минут сейчас — и день завершится осознаннее.",
-    "Вечер — хорошее время остановиться на минуту 🌿\n\nКак ты сегодня? Зафиксируй своё состояние — это занимает меньше минуты.",
-    "Маленькое напоминание 💙\n\nСегодняшняя запись настроения ещё не сделана. Загляни в приложение, когда будет момент.",
-]
-
-async def check_mood_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Запускается каждый день в 20:00. Шлёт напоминание тем, кто не заполнял настроение сегодня."""
-    import random
-    db = load_db()
-    today = datetime.now().strftime("%Y-%m-%d")
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🌿 Отметить состояние", web_app=WebAppInfo(url=MINI_APP_URL))
-    ]])
-
-    for user_id_str, data in db.items():
-        # Только те, у кого включены уведомления
-        if not data.get("notifications_enabled", True):
-            continue
-
-        # Только те, кто ещё не делал запись сегодня
-        if data.get("last_checkin") == today:
-            continue
-
-        try:
-            text = random.choice(MOOD_REMINDER_TEXTS)
-            await context.bot.send_message(
-                chat_id=int(user_id_str),
-                text=text,
-                reply_markup=keyboard
-            )
-            logging.info(f"Напоминание о настроении → пользователь {user_id_str}")
-        except Exception as e:
-            logging.warning(f"Ошибка напоминания пользователю {user_id_str}: {e}")
-
 
 async def start_api_server():
     app = web.Application()
     app.router.add_post("/notifications", handle_notifications)
     app.router.add_get("/notifications", handle_notifications_status)
     app.router.add_post("/mood-checkin", handle_mood_checkin)
-
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", API_PORT)
@@ -257,163 +445,132 @@ async def start_api_server():
 
 
 # ═══════════════════════════════════════════════
-# ПЛАНИРОВЩИК ВОРОНКИ
+# НАПОМИНАНИЯ О НАСТРОЕНИИ
 # ═══════════════════════════════════════════════
 
+MOOD_REMINDER_TEXTS = [
+    "Привет 🌙 Ты сегодня ещё не проверял(а) своё состояние.\n\nПара минут сейчас — и день завершится осознаннее.",
+    "Вечер — хорошее время остановиться на минуту 🌿\n\nКак ты сегодня? Зафиксируй своё состояние — это занимает меньше минуты.",
+    "Маленькое напоминание 💙\n\nСегодняшняя запись настроения ещё не сделана. Загляни в приложение, когда будет момент.",
+]
+
+async def check_mood_reminders(context: ContextTypes.DEFAULT_TYPE):
+    import random
+    db = load_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("Отметить состояние", web_app=WebAppInfo(url=MINI_APP_URL))
+    ]])
+    for user_id_str, data in db.items():
+        if not data.get("notifications_enabled", True):
+            continue
+        if data.get("last_checkin") == today:
+            continue
+        try:
+            text = random.choice(MOOD_REMINDER_TEXTS)
+            await context.bot.send_message(
+                chat_id=int(user_id_str),
+                text=text,
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            logging.warning(f"Ошибка напоминания пользователю {user_id_str}: {e}")
+
+
+# ═══════════════════════════════════════════════
+# ВОРОНКА (сохраняем для обратной совместимости)
+# ═══════════════════════════════════════════════
+
+FUNNEL_MESSAGES = [
+    (
+        DELAY_AFTER_GUIDE_HOURS,
+        "Гайд у тебя 📎\n\nОдин совет: не пытайся внедрить все 7 шагов сразу. Выбери один — тот, что откликнулся больше всего — и попробуй именно его на этой неделе.\n\nМаленький реальный шаг работает лучше большого плана.",
+        None
+    ),
+    (
+        24,
+        "Прокрастинация почти никогда не про лень.\n\nЗа ней обычно стоит что-то конкретное: страх не справиться, перфекционизм, усталость которую не замечаешь, или задача которая просто не твоя.\n\nПопробуй сегодня спросить себя: что именно я откладываю — и что я на самом деле чувствую по отношению к этому?",
+        InlineKeyboardMarkup([[InlineKeyboardButton("Попробовать практику", web_app=WebAppInfo(url=MINI_APP_URL))]])
+    ),
+    (
+        72,
+        "Есть один момент, про который редко говорят.\n\nПрокрастинация часто усиливается, когда мы слишком строги к себе. Чем больше ругаем — тем сильнее избегание.\n\nЭто не значит «разреши себе всё». Это значит — попробуй отнестись к себе так, как отнёсся бы к другу в похожей ситуации.",
+        InlineKeyboardMarkup([[InlineKeyboardButton("Открыть практики", web_app=WebAppInfo(url=MINI_APP_URL))]])
+    ),
+    (
+        120,
+        "Если после гайда что-то сдвинулось — здорово. Если нет — это тоже нормально.\n\nИногда паттерны уходят корнями глубже, чем любая техника может достать. Это не повод расстраиваться — просто повод копнуть глубже.\n\nЯ работаю с этим в индивидуальном формате — если захочется разобраться именно в своём случае, ты знаешь где меня найти 🤍",
+        InlineKeyboardMarkup([[InlineKeyboardButton("Записаться к Веронике", url=CONSULTATION_URL)]])
+    ),
+    (
+        168,
+        f"Надеюсь, что-то из гайда и этих заметок оказалось полезным. Забирай что откликнулось, остальное оставь.\n\nЕсли захочешь продолжить — больше материалов в канале: {CHANNEL_URL}\nЕсли захочешь поработать лично — @pa_nicka",
+        None
+    ),
+]
+
 async def check_funnel(context: ContextTypes.DEFAULT_TYPE):
-    """Запускается каждые 30 минут. Выживает после перезапуска бота."""
     db = load_db()
     now = datetime.now()
     changed = False
-
     for user_id_str, data in db.items():
-        # Пропускаем пользователей у которых нет данных о скачивании гайда
         if "downloaded_at" not in data:
             continue
-
         downloaded_at = datetime.fromisoformat(data["downloaded_at"])
         hours_passed = (now - downloaded_at).total_seconds() / 3600
         current_step = data.get("funnel_step", 0)
-
         for step_index, (hours_threshold, text, keyboard) in enumerate(FUNNEL_MESSAGES):
             if hours_passed >= hours_threshold and current_step <= step_index:
                 try:
                     await context.bot.send_message(
                         chat_id=int(user_id_str),
                         text=text,
-                        reply_markup=keyboard  # None = без кнопок
+                        reply_markup=keyboard
                     )
                     db[user_id_str]["funnel_step"] = step_index + 1
                     changed = True
-                    logging.info(f"Воронка шаг {step_index + 1} → пользователь {user_id_str}")
                 except Exception as e:
-                    logging.warning(f"Ошибка отправки шага {step_index + 1} пользователю {user_id_str}: {e}")
+                    logging.warning(f"Ошибка воронки пользователю {user_id_str}: {e}")
                 break
-
     if changed:
         save_db(db)
 
 
 # ═══════════════════════════════════════════════
-# КОМАНДА /start
+# ВСПОМОГАТЕЛЬНЫЕ КОМАНДЫ
 # ═══════════════════════════════════════════════
 
-WELCOME_TEXT = """Привет! 👋
+HELP_TEXT = """Вот что есть в этом боте
 
-Меня зовут Вероника, я практикующий психолог.
+Практики и инструменты — приложение открывается прямо в Telegram. Есть упражнения для расслабления, работы с мыслями и восстановления энергии, трекер настроения и анонимные вопросы к Веронике.
 
-В этом боте я собрала короткие практики, гайды и инструменты, которые использую в работе с клиентами. Они помогут повысить качество жизни и лучше понять себя ❤️
+Гайд — бесплатный материал «7 шагов от прокрастинации».
 
-Выбери что тебя интересует 👇"""
+Консультация — индивидуальная работа в формате серии сессий. Если хочешь разобраться в своей ситуации глубже — напиши Веронике напрямую.
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧘 Открыть приложение с практиками", web_app=WebAppInfo(url=MINI_APP_URL))],
-        [InlineKeyboardButton("📥 Скачать гайд: 7 шагов от прокрастинации", callback_data="download_guide")],
-        [InlineKeyboardButton("💬 Записаться на консультацию", url=CONSULTATION_URL)],
-    ])
-    await update.message.reply_text(WELCOME_TEXT, reply_markup=keyboard)
-
-
-# ═══════════════════════════════════════════════
-# КОМАНДА /help
-# ═══════════════════════════════════════════════
-
-HELP_TEXT = """Вот что есть в этом боте 👇
-
-🧘 *Приложение с практиками*
-Короткие упражнения для снижения тревожности и осознанности. Нажми кнопку «Открыть приложение с практиками» — оно откроется прямо здесь в Telegram, выходить никуда не нужно.
-
-📥 *Гайд «7 шагов от прокрастинации»*
-Бесплатный материал, который я использую в работе с клиентами. Нажми кнопку «Скачать гайд» и получишь PDF файл.
-
-💬 *Консультация*
-Индивидуальная работа в формате серии сессий. Если хочешь разобраться в своей ситуации глубже — напиши мне напрямую через кнопку «Записаться на консультацию».
-
-Если что-то не работает или есть вопросы — пиши @pa\\_nicka"""
+Если что-то не работает — пиши @pa_nicka"""
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧘 Открыть приложение с практиками", web_app=WebAppInfo(url=MINI_APP_URL))],
-        [InlineKeyboardButton("📥 Скачать гайд", callback_data="download_guide")],
-        [InlineKeyboardButton("💬 Записаться на консультацию", url=CONSULTATION_URL)],
+        [InlineKeyboardButton("Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("Скачать гайд", callback_data="download_guide")],
+        [InlineKeyboardButton("Написать Веронике", url=CONSULTATION_URL)],
     ])
-    await update.message.reply_text(HELP_TEXT, reply_markup=keyboard, parse_mode="Markdown")
-
-
-# ═══════════════════════════════════════════════
-# КОМАНДА /stats (только для тебя)
-# ═══════════════════════════════════════════════
+    await update.message.reply_text(HELP_TEXT, reply_markup=keyboard)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != YOUR_TELEGRAM_ID:
         return
-
     db = load_db()
-    total = len([u for u in db.values() if "downloaded_at" in u])
-
-    if total == 0:
-        await update.message.reply_text("Пока никто не скачал гайд.")
-        return
-
-    steps = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
-    notifications_off = 0
-    for data in db.values():
-        if "downloaded_at" not in data:
-            continue
-        step = data.get("funnel_step", 0)
-        steps[step] = steps.get(step, 0) + 1
-        if not data.get("notifications_enabled", True):
-            notifications_off += 1
-
-    completed = steps.get(5, 0)
-
-    text = (
-        f"📊 *Статистика воронки*\n\n"
-        f"Всего скачали гайд: *{total}*\n"
-        f"Отключили уведомления: *{notifications_off}*\n\n"
-        f"По шагам воронки:\n"
-        f"  Шаг 0 (только скачали): {steps.get(0, 0)}\n"
-        f"  Шаг 1 (получили сообщение день 0): {steps.get(1, 0)}\n"
-        f"  Шаг 2 (день 1): {steps.get(2, 0)}\n"
-        f"  Шаг 3 (день 3): {steps.get(3, 0)}\n"
-        f"  Шаг 4 (день 5): {steps.get(4, 0)}\n"
-        f"  Шаг 5 (прошли всю воронку): {steps.get(5, 0)}\n\n"
-        f"Прошли воронку полностью: *{completed}* из *{total}*"
+    total = len(db)
+    with_guide = len([u for u in db.values() if "downloaded_at" in u])
+    notifications_off = len([u for u in db.values() if not u.get("notifications_enabled", True)])
+    await update.message.reply_text(
+        f"Статистика\n\n"
+        f"Всего пользователей: {total}\n"
+        f"Скачали гайд: {with_guide}\n"
+        f"Отключили уведомления: {notifications_off}"
     )
-
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-
-# ═══════════════════════════════════════════════
-# СКАЧИВАНИЕ ГАЙДА
-# ═══════════════════════════════════════════════
-
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "download_guide":
-        user_id = query.from_user.id
-
-        if not GUIDE_FILE_ID:
-            await query.message.reply_text("Гайд скоро появится здесь! Следи за обновлениями 🤍")
-            return
-
-        await query.message.reply_document(
-            document=GUIDE_FILE_ID,
-            caption="7 шагов для преодоления прокрастинации 📎"
-        )
-
-        db = load_db()
-        if str(user_id) not in db:
-            mark_guide_downloaded(user_id)
-            logging.info(f"Новый пользователь в воронке: {user_id}")
-
-
-# ═══════════════════════════════════════════════
-# ЗАГРУЗКА / ЗАМЕНА ГАЙДА
-# ═══════════════════════════════════════════════
 
 async def upload_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != YOUR_TELEGRAM_ID:
@@ -426,13 +583,10 @@ async def receive_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if not context.user_data.get("waiting_for_guide"):
         return
-
     context.user_data["waiting_for_guide"] = False
-
     global GUIDE_FILE_ID
     file_id = update.message.document.file_id
     GUIDE_FILE_ID = file_id
-
     config = {}
     if os.path.exists("config.json"):
         with open("config.json") as f:
@@ -440,24 +594,14 @@ async def receive_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config["guide_file_id"] = file_id
     with open("config.json", "w") as f:
         json.dump(config, f)
-
-    await update.message.reply_text(
-        "✅ Гайд сохранён и сразу доступен пользователям!\n\n"
-        "Нажми кнопку «Скачать гайд» чтобы проверить."
-    )
-
-
-# ═══════════════════════════════════════════════
-# ТЕСТОВАЯ КОМАНДА /testnotify (только для тебя)
-# Запускает проверку напоминаний прямо сейчас
-# ═══════════════════════════════════════════════
+    await update.message.reply_text("Гайд сохранён и сразу доступен пользователям.")
 
 async def test_notify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != YOUR_TELEGRAM_ID:
         return
-    await update.message.reply_text("Запускаю проверку напоминаний о настроении...")
+    await update.message.reply_text("Запускаю проверку напоминаний...")
     await check_mood_reminders(context)
-    await update.message.reply_text("Готово. Проверь — пришло ли уведомление.")
+    await update.message.reply_text("Готово.")
 
 
 # ═══════════════════════════════════════════════
@@ -471,12 +615,10 @@ def load_config():
             config = json.load(f)
             GUIDE_FILE_ID = config.get("guide_file_id")
             if GUIDE_FILE_ID:
-                logging.info("✅ Гайд загружен из config.json")
+                logging.info("Гайд загружен из config.json")
 
 async def main_async():
     load_config()
-
-    # Запускаем API-сервер параллельно с ботом
     await start_api_server()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -485,23 +627,21 @@ async def main_async():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("uploadguide", upload_guide))
+    app.add_handler(CommandHandler("testnotify", test_notify))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.Document.PDF, receive_document))
 
     app.job_queue.run_repeating(check_funnel, interval=1800, first=10)
 
-    # Напоминание о записи настроения — каждый день в 20:00 MSK (= 17:00 UTC)
     from datetime import time as dtime
     app.job_queue.run_daily(check_mood_reminders, time=dtime(hour=17, minute=0, tzinfo=timezone.utc))
-
-    app.add_handler(CommandHandler("testnotify", test_notify))
 
     print("Бот запущен ✅")
     print(f"API-сервер слушает на порту {API_PORT} ✅")
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
-    await asyncio.Event().wait()  # держим процесс живым
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     asyncio.run(main_async())
