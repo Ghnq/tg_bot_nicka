@@ -179,7 +179,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+
+    print("BUTTON CLICKED")
+    print("DATA:", query.data)
+
     await query.answer()
+
     data = query.data
 
     # ── Выбор ветки ──────────────────────────────
