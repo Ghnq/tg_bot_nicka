@@ -1,4 +1,3 @@
-
 import logging
 import json
 import os
@@ -23,7 +22,6 @@ YOUR_TELEGRAM_ID = 451210923
 API_PORT = 8080
 
 # Картинка для вопроса "Что мешает жить спокойно"
-# Замени на свой URL или file_id после первого деплоя
 BRANCH_IMAGE_URL = "https://images.unsplash.com/photo-1518002054494-3a6f94352e9d?w=800&q=80"
 # ─────────────────────────────────────────────
 
@@ -63,6 +61,27 @@ def save_user(user_id: int):
         }
         save_db(db)
 
+def reset_user(user_id: int):
+    db = load_db()
+    key = str(user_id)
+    if key in db:
+        del db[key]
+        save_db(db)
+        return True
+    return False
+
+def save_test_result(user_id: int, anxiety: int, apathy: int):
+    db = load_db()
+    key = str(user_id)
+    if key not in db:
+        db[key] = {"first_seen": datetime.now().isoformat(), "notifications_enabled": True}
+    db[key]["last_test"] = {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "anxiety_score": anxiety,
+        "apathy_score": apathy,
+    }
+    save_db(db)
+
 
 # ═══════════════════════════════════════════════
 # ТЕКСТЫ — КАРТОЧКИ "ЧТО ДАЁТ ТЕРАПИЯ"
@@ -79,18 +98,169 @@ THERAPY_CARDS = [
 
 
 # ═══════════════════════════════════════════════
+# ТЕСТ НА ТРЕВОЖНОСТЬ / АПАТИЮ
+# ═══════════════════════════════════════════════
+# Каждый вопрос относится к одной из двух шкал: anxiety или apathy.
+# Ответы дают 0-3 балла. Максимум по каждой шкале — 9 (3 вопроса × 3 балла).
+
+TEST_QUESTIONS = [
+    {
+        "axis": "anxiety",
+        "text": "Как часто в последнее время накатывает тревога без явной причины?",
+        "options": [
+            ("Почти никогда", 0),
+            ("Иногда", 1),
+            ("Часто", 2),
+            ("Почти каждый день", 3),
+        ],
+    },
+    {
+        "axis": "apathy",
+        "text": "Насколько сложно в последнее время браться за привычные дела?",
+        "options": [
+            ("Не сложнее обычного", 0),
+            ("Иногда через силу", 1),
+            ("Часто через силу", 2),
+            ("Почти всё через силу", 3),
+        ],
+    },
+    {
+        "axis": "anxiety",
+        "text": "Бывает ли, что мысли крутятся по кругу и трудно их остановить?",
+        "options": [
+            ("Почти нет", 0),
+            ("Изредка", 1),
+            ("Часто", 2),
+            ("Почти постоянно", 3),
+        ],
+    },
+    {
+        "axis": "apathy",
+        "text": "Интерес к тому, что раньше радовало — какой он сейчас?",
+        "options": [
+            ("Как обычно", 0),
+            ("Чуть слабее", 1),
+            ("Заметно слабее", 2),
+            ("Почти пропал", 3),
+        ],
+    },
+    {
+        "axis": "anxiety",
+        "text": "Замечаешь телесные реакции на тревогу — учащённое сердцебиение, напряжение, сбитое дыхание?",
+        "options": [
+            ("Редко", 0),
+            ("Иногда", 1),
+            ("Часто", 2),
+            ("Почти постоянно", 3),
+        ],
+    },
+    {
+        "axis": "apathy",
+        "text": "Как ощущается уровень энергии в течение дня?",
+        "options": [
+            ("В целом хватает", 0),
+            ("Хватает не всегда", 1),
+            ("Часто не хватает", 2),
+            ("Почти нет сил", 3),
+        ],
+    },
+]
+
+
+def kb_test_question(q_index: int):
+    options = TEST_QUESTIONS[q_index]["options"]
+    buttons = [
+        [InlineKeyboardButton(label, callback_data=f"testans_{q_index}_{score}")]
+        for label, score in options
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
+def build_test_result(anxiety: int, apathy: int):
+    """Возвращает (текст, клавиатуру) по результатам теста."""
+    total = anxiety + apathy
+    diff = anxiety - apathy
+
+    if diff >= 3:
+        dominant = "anxiety"
+    elif diff <= -3:
+        dominant = "apathy"
+    else:
+        dominant = "mixed"
+
+    if total <= 6:
+        intensity_line = (
+            "Судя по ответам, сейчас всё в целом устойчиво — без выраженной тревоги или упадка сил."
+        )
+    elif total <= 12:
+        intensity_line = (
+            "Судя по ответам, кое-что даёт о себе знать не первый день — не критично, но и не игнорировать это тоже стоит."
+        )
+    else:
+        intensity_line = (
+            "Судя по ответам, сейчас довольно тяжело — и это состояние, с которым имеет смысл кому-то показать, а не носить в одиночку."
+        )
+
+    if dominant == "anxiety":
+        focus_line = (
+            "Похоже, больше откликается *тревога* — фоновое напряжение, мысли по кругу, телесные реакции."
+        )
+        practices = (
+            "🌱 *Заземление 5-4-3-2-1* — возвращает в настоящий момент\n"
+            "🌬 *Дыхание 4-7-8* — замедляет нервную систему\n"
+            "📓 *Дневник мыслей* — помогает вытащить наружу то, что крутится внутри"
+        )
+    elif dominant == "apathy":
+        focus_line = (
+            "Похоже, больше откликается *упадок сил и апатия* — дела даются тяжелее, интерес снижен."
+        )
+        practices = (
+            "⚡️ *Поведенческая активация* — постепенно возвращает активность без давления\n"
+            "🫂 *Заряд поддержки* — короткое упражнение для тяжёлых дней\n"
+            "📊 *Трекер настроения* — помогает заметить, что влияет на состояние"
+        )
+    else:
+        focus_line = (
+            "Похоже, тревога и упадок сил сейчас идут *примерно вровень* — они часто раскручивают друг друга."
+        )
+        practices = (
+            "🌬 *Дыхание 4-7-8* или 🌱 *Заземление 5-4-3-2-1* — как первый шаг\n"
+            "📓 *Дневник мыслей* — чтобы разобрать то, что накопилось"
+        )
+
+    text = (
+        f"*Результат*\n\n{intensity_line}\n\n{focus_line}\n\n"
+        f"В приложении для этого есть:\n\n{practices}\n\n"
+        "Это не диагностика и не замена консультации — просто способ немного лучше понять, что сейчас происходит."
+    )
+
+    buttons = [
+        [InlineKeyboardButton("📱 Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
+    ]
+    if total > 12:
+        buttons.append([InlineKeyboardButton("✍️ Написать мне — обсудим", url=CONSULTATION_URL)])
+    else:
+        buttons.append([InlineKeyboardButton("💬 Узнать, что даёт терапия", callback_data="therapy_cards")])
+        buttons.append([InlineKeyboardButton("✍️ Написать мне", url=CONSULTATION_URL)])
+
+    return text, InlineKeyboardMarkup(buttons)
+
+
+# ═══════════════════════════════════════════════
 # КЛАВИАТУРЫ
 # ═══════════════════════════════════════════════
 
 def kb_start():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔍 Хочу разобраться в своём запросе", callback_data="choose_branch")],
+        [InlineKeyboardButton("🧭 Пройти тест на тревожность/апатию", callback_data="start_test")],
         [InlineKeyboardButton("✍️ Написать мне напрямую", url=CONSULTATION_URL)],
     ])
 
 def kb_returning():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔍 Выбрать тему", callback_data="choose_branch")],
+        [InlineKeyboardButton("🧭 Пройти тест на тревожность/апатию", callback_data="start_test")],
         [InlineKeyboardButton("📱 Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
         [InlineKeyboardButton("✍️ Написать мне", url=CONSULTATION_URL)],
     ])
@@ -198,6 +368,48 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+
+    # ── Тест на тревожность/апатию ───────────────
+    if data == "start_test":
+        context.user_data["test_scores"] = {"anxiety": 0, "apathy": 0}
+        q = TEST_QUESTIONS[0]
+        try:
+            await query.edit_message_text(
+                f"Вопрос 1 из {len(TEST_QUESTIONS)}\n\n{q['text']}",
+                reply_markup=kb_test_question(0)
+            )
+        except Exception:
+            await query.message.reply_text(
+                f"Вопрос 1 из {len(TEST_QUESTIONS)}\n\n{q['text']}",
+                reply_markup=kb_test_question(0)
+            )
+        return
+
+    if data.startswith("testans_"):
+        _, q_index_str, score_str = data.split("_")
+        q_index = int(q_index_str)
+        score = int(score_str)
+        axis = TEST_QUESTIONS[q_index]["axis"]
+
+        scores = context.user_data.get("test_scores", {"anxiety": 0, "apathy": 0})
+        scores[axis] = scores.get(axis, 0) + score
+        context.user_data["test_scores"] = scores
+
+        next_index = q_index + 1
+        if next_index < len(TEST_QUESTIONS):
+            q = TEST_QUESTIONS[next_index]
+            text = f"Вопрос {next_index + 1} из {len(TEST_QUESTIONS)}\n\n{q['text']}"
+            markup = kb_test_question(next_index)
+        else:
+            save_test_result(query.from_user.id, scores["anxiety"], scores["apathy"])
+            text, markup = build_test_result(scores["anxiety"], scores["apathy"])
+            context.user_data.pop("test_scores", None)
+
+        try:
+            await query.edit_message_text(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            await query.message.reply_text(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN)
+        return
 
     # ── Выбор ветки ──────────────────────────────
     if data == "choose_branch":
@@ -529,6 +741,7 @@ async def check_mood_reminders(context: ContextTypes.DEFAULT_TYPE):
 HELP_TEXT = (
     "*Что есть в этом боте*\n\n"
     "📱 *Приложение* — практики для расслабления, работы с мыслями и восстановления энергии, трекер настроения и анонимные вопросы к Веронике\n\n"
+    "🧭 *Тест* — короткий тест на тревожность и апатию с рекомендациями по результату\n\n"
     "📎 *Гайд* — бесплатный материал «7 шагов от прокрастинации»\n\n"
     "🗓 *Консультация* — индивидуальная работа в формате серии сессий. Если хочешь разобраться в своей ситуации глубже — напиши Веронике напрямую\n\n"
     "Если что-то не работает — пиши @pa\_nicka"
@@ -537,6 +750,7 @@ HELP_TEXT = (
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📱 Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [InlineKeyboardButton("🧭 Пройти тест", callback_data="start_test")],
         [InlineKeyboardButton("📎 Скачать гайд", callback_data="download_guide")],
         [InlineKeyboardButton("✍️ Написать Веронике", url=CONSULTATION_URL)],
     ])
@@ -548,9 +762,11 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
     total = len(db)
     notifications_off = len([u for u in db.values() if not u.get("notifications_enabled", True)])
+    tests_completed = len([u for u in db.values() if "last_test" in u])
     await update.message.reply_text(
         f"*Статистика*\n\n"
         f"Всего пользователей: {total}\n"
+        f"Прошли тест: {tests_completed}\n"
         f"Отключили уведомления: {notifications_off}",
         parse_mode=ParseMode.MARKDOWN
     )
@@ -586,6 +802,17 @@ async def test_notify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await check_mood_reminders(context)
     await update.message.reply_text("Готово ✅")
 
+async def reset_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Только для тебя — сбрасывает твою запись, чтобы снова увидеть /start как новый пользователь
+    if update.effective_user.id != YOUR_TELEGRAM_ID:
+        return
+    context.user_data.pop("test_scores", None)
+    removed = reset_user(update.effective_user.id)
+    if removed:
+        await update.message.reply_text("Готово — ты снова 'новый' пользователь. Жми /start ✅")
+    else:
+        await update.message.reply_text("Тебя и так не было в базе. Жми /start ✅")
+
 
 # ═══════════════════════════════════════════════
 # ЗАПУСК
@@ -611,6 +838,7 @@ async def main_async():
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("uploadguide", upload_guide))
     app.add_handler(CommandHandler("testnotify", test_notify))
+    app.add_handler(CommandHandler("resetme", reset_me))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.Document.PDF, receive_document))
 
@@ -626,4 +854,3 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
-ENDOFFILE
